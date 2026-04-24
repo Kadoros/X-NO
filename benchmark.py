@@ -145,9 +145,15 @@ class HeinnXConv1D(nn.Module):
     def __init__(self, in_ch, out_ch, degree):
         super().__init__()
         self.degree = degree
-        # 가중치는 오직 미분/변화량 공간(Derivative Space)에서만 작동함
-        self.W = nn.Parameter(
+        # Path 1: 원본 신호 믹싱 (디테일 보존)
+        self.W_base = nn.Parameter(
             torch.randn(in_ch, out_ch, degree + 1) / math.sqrt(in_ch * (degree + 1))
+        )
+
+        # Path 2: Heinn-X 적분 신호 믹싱 (물리적 트렌드)
+        # 적분하면 차수가 1 증가하므로 가중치 크기도 degree+2
+        self.W_int = nn.Parameter(
+            torch.randn(in_ch, out_ch, degree + 2) / math.sqrt(in_ch * (degree + 2))
         )
 
         self.register_buffer("S", build_S_matrix(degree))
@@ -160,23 +166,27 @@ class HeinnXConv1D(nn.Module):
         if key not in self._cache:
             self._cache[key] = (
                 chebyshev_matrices(N, d_eff, x.device)[0],
+                chebyshev_matrices(N, d_eff, x.device)[1],
                 chebyshev_sum_matrix(N, d_eff, x.device),
             )
-        T_pinv, T_sum = self._cache[key]
+        T_pinv, T, T_sum = self._cache[key]
 
-        # 1. 입력을 계수로 변환
+        # 1. 다항식 계수 추출
         c = torch.einsum("bcn,kn->bck", x, T_pinv)
 
-        # 2. 신경망(W)은 변화량(Derivative/Forcing term)만 예측함
-        m_deriv = torch.einsum("bck,cok->bok", c, self.W[:, :, : d_eff + 1])
+        # ── Path 1: Base ChebNO 연산 (디테일 담당) ──
+        m_base = torch.einsum("bck,cok->bok", c, self.W_base[:, :, : d_eff + 1])
+        out_base = torch.einsum("bok,nk->bon", m_base, T)
 
-        # 3. [승리 요인: 적분 병목] Heinn-X 행렬이 강제로 최종 해를 적분해냄!
-        # (신경망이 S를 우회할 수 없음)
-        S_slice = self.S[: d_eff + 2, : d_eff + 1]
-        m_int = torch.einsum("bok,lk->bol", m_deriv, S_slice)
+        # ── Path 2: Heinn-X 적분 연산 (트렌드 담당) ──
+        # [핵심] 섞기 전에 먼저 대수적으로 완벽히 적분함 (c_int 생성)
+        c_int = torch.einsum("bck,lk->bcl", c, self.S[: d_eff + 2, : d_eff + 1])
+        # 적분된 특징맵을 독립적인 가중치(W_int)로 믹싱
+        m_int = torch.einsum("bcl,col->bol", c_int, self.W_int[:, :, : d_eff + 2])
+        out_int = torch.einsum("bol,nl->bon", m_int, T_sum)
 
-        # 4. 차수가 1단계 높아진(d_eff+2) 다항식을 그리드로 복원
-        return torch.einsum("bol,nl->bon", m_int, T_sum)
+        # 최종 출력: 디테일 + 적분 트렌드
+        return out_base + out_int
 
 
 class ChebConv2D(nn.Module):
@@ -216,41 +226,60 @@ class HeinnXConv2D(nn.Module):
         super().__init__()
         self.degree = degree
         self.out_ch = out_ch
-        self.W_w = nn.Parameter(
+
+        # Path 1 (Base) 가중치
+        self.W_base_w = nn.Parameter(
             torch.randn(in_ch, out_ch, degree + 1) / math.sqrt(in_ch * (degree + 1))
         )
-        self.W_h = nn.Parameter(
+        self.W_base_h = nn.Parameter(
             torch.randn(out_ch, out_ch, degree + 1) / math.sqrt(out_ch * (degree + 1))
+        )
+
+        # Path 2 (Integral) 가중치
+        self.W_int_w = nn.Parameter(
+            torch.randn(in_ch, out_ch, degree + 2) / math.sqrt(in_ch * (degree + 2))
+        )
+        self.W_int_h = nn.Parameter(
+            torch.randn(out_ch, out_ch, degree + 2) / math.sqrt(out_ch * (degree + 2))
         )
 
         self.register_buffer("S", build_S_matrix(degree))
         self._cache = {}
 
-    def _1d(self, x, W, N):
+    def _1d(self, x, W_b, W_i, N):
         d_eff = min(self.degree, N // 2)
         key = (N, d_eff, str(x.device))
         if key not in self._cache:
             self._cache[key] = (
                 chebyshev_matrices(N, d_eff, x.device)[0],
+                chebyshev_matrices(N, d_eff, x.device)[1],
                 chebyshev_sum_matrix(N, d_eff, x.device),
             )
-        T_pinv, T_sum = self._cache[key]
+        T_pinv, T, T_sum = self._cache[key]
 
         c = torch.einsum("bcn,kn->bck", x, T_pinv)
-        # 신경망 믹싱 (변화량 도출)
-        m_deriv = torch.einsum("bck,cok->bok", c, W[:, :, : d_eff + 1])
-        # Heinn-X 강제 적분
-        S_slice = self.S[: d_eff + 2, : d_eff + 1]
-        m_int = torch.einsum("bok,lk->bol", m_deriv, S_slice)
 
-        return torch.einsum("bol,nl->bon", m_int, T_sum)
+        # Base Path
+        m_base = torch.einsum("bck,cok->bok", c, W_b[:, :, : d_eff + 1])
+        out_base = torch.einsum("bok,nk->bon", m_base, T)
+
+        # Integral Path
+        c_int = torch.einsum("bck,lk->bcl", c, self.S[: d_eff + 2, : d_eff + 1])
+        m_int = torch.einsum("bcl,col->bol", c_int, W_i[:, :, : d_eff + 2])
+        out_int = torch.einsum("bol,nl->bon", m_int, T_sum)
+
+        return out_base + out_int
 
     def forward(self, x):
         B, C, H, W = x.shape
         xw = x.permute(0, 2, 1, 3).reshape(B * H, C, W)
-        xw = self._1d(xw, self.W_w, W).reshape(B, H, self.out_ch, W).permute(0, 2, 1, 3)
+        xw = (
+            self._1d(xw, self.W_base_w, self.W_int_w, W)
+            .reshape(B, H, self.out_ch, W)
+            .permute(0, 2, 1, 3)
+        )
         xh = xw.permute(0, 3, 1, 2).reshape(B * W, self.out_ch, H)
-        xh = self._1d(xh, self.W_h, H)
+        xh = self._1d(xh, self.W_base_h, self.W_int_h, H)
         return xh.reshape(B, W, self.out_ch, H).permute(0, 2, 3, 1)
 
 
@@ -571,12 +600,61 @@ def run_2d():
     return results
 
 
+# ════════════════════════════════════════════════════════════════════
+#  NEW BENCHMARK: Low-Data Extrapolation (Few-Shot)
+# ════════════════════════════════════════════════════════════════════
+
+
+def run_fewshot_1d():
+    print("\n" + "=" * 65)
+    print("  1D 벤치마크: Low-Data Extrapolation (단 20개의 데이터로 학습)")
+    print("  목적: Heinn-X의 대수적 제약(X-Constant)이 과적합을 막는지 검증")
+    print("=" * 65)
+
+    # 1. 훈련 데이터: 단 20개 (데이터 기근 상태)
+    U_master, V_master = generate_burgers_master(220, 64)
+    U_tr, V_tr = U_master[:20], V_master[:20]
+    tr = DataLoader(
+        TensorDataset(make_input_1d(U_tr), V_tr.unsqueeze(-1)),
+        batch_size=4,
+        shuffle=True,
+    )
+
+    # 2. 테스트 데이터: 200개 (처음 보는 패턴들)
+    U_te, V_te = U_master[20:], V_master[20:]
+    te = DataLoader(
+        TensorDataset(make_input_1d(U_te), V_te.unsqueeze(-1)), batch_size=32
+    )
+
+    fno = make_no_1d(lambda: SpectralConv1D(32, 32, 16)).to(DEVICE)
+    cheb = make_no_1d(lambda: ChebConv1D(32, 32, 16)).to(DEVICE)
+    hx = make_no_1d(lambda: HeinnXConv1D(32, 32, 16)).to(DEVICE)
+
+    results = {}
+    for name, model in [("FNO", fno), ("ChebNO", cheb), ("Heinn-X", hx)]:
+        print(f"\n── {name} 학습 (Few-Shot) ────────────────────────")
+        opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, 50)
+
+        for ep in range(1, 51):
+            loss = train_epoch(model, tr, opt)
+            sched.step()
+            if ep % 10 == 0:
+                err = evaluate(model, te)
+                print(f"  Ep{ep:3d}  Train Loss={loss:.4e}  Test rel-L2={err:.4f}")
+
+        results[name] = evaluate(model, te)
+    return results
+
+
 if __name__ == "__main__":
     r1d = run_1d()
     r2d = run_2d()
+    r_few = run_fewshot_1d()  # <-- 새로 추가된 실험 실행
 
     print("\n" + "=" * 65 + "\n  FINAL SUMMARY\n" + "=" * 65)
-    print("\n  1D Burgers (True Resolution Invariance):")
+
+    print("\n  [1] 1D Burgers (True Resolution Invariance):")
     for res in [64, 32, 16]:
         ef, ec, eh = r1d["FNO"][res], r1d["ChebNO"][res], r1d["Heinn-X"][res]
         tag = (
@@ -586,7 +664,7 @@ if __name__ == "__main__":
         )
         print(f"    res={res:3d}  FNO={ef:.4f}  Cheb={ec:.4f}  HX={eh:.4f}  [{tag}]")
 
-    print("\n  2D Helmholtz PDE (True Physical Matching):")
+    print("\n  [2] 2D Helmholtz PDE (True Physical Matching):")
     for res in [32, 16]:
         ef, ec, eh = r2d["FNO"][res], r2d["ChebNO"][res], r2d["Heinn-X"][res]
         tag = (
@@ -595,3 +673,10 @@ if __name__ == "__main__":
             else ("Cheb" if min(ef, ec, eh) == ec else "HX✓")
         )
         print(f"    {res}x{res}  FNO={ef:.4f}  Cheb={ec:.4f}  HX={eh:.4f}  [{tag}]")
+
+    print("\n  [3] 1D Few-Shot Extrapolation (데이터 기근 환경 극복):")
+    ef, ec, eh = r_few["FNO"], r_few["ChebNO"], r_few["Heinn-X"]
+    tag = (
+        "FNO" if min(ef, ec, eh) == ef else ("Cheb" if min(ef, ec, eh) == ec else "HX✓")
+    )
+    print(f"    20 Samples  FNO={ef:.4f}  Cheb={ec:.4f}  HX={eh:.4f}  [{tag}]")
