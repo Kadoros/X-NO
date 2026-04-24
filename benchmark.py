@@ -647,12 +647,99 @@ def run_fewshot_1d():
     return results
 
 
+# ════════════════════════════════════════════════════════════════════
+#  NEW BENCHMARK: Toy Problem (Sanity Check for Exact Mathematics)
+# ════════════════════════════════════════════════════════════════════
+
+
+def run_toy_problem():
+    print("\n" + "=" * 65)
+    print("  TOY PROBLEM: f(x) = 4x³ - 3x² + 2x - 1 의 완벽한 부정합 검증")
+    print("  목적: PyTorch 텐서 연산이 Heinn-X 대수학(Algorithm B)과 100% 일치하는가?")
+    print("=" * 65)
+
+    # 1. 다항식 정의: f(x) = -1 + 2x - 3x^2 + 4x^3
+    p = [-1, 2, -3, 4]
+
+    # 2. 순수 대수학(Algorithm B)을 통한 정확한 부정합 계수 도출
+    F_exact_coeffs = _algorithm_B(p)
+    print(f"  [수학적 정답] Σf(x) 계수 : {[float(c) for c in F_exact_coeffs]}")
+
+    # 3. PyTorch 행렬 파이프라인 (신경망 가중치 배제)
+    N = 64
+    degree = 5
+    x = torch.linspace(0, 1, N, dtype=torch.float32)
+
+    # 그리드 위에서 f(x) 값 계산
+    f_val = (
+        sum(c * (x**i) for i, c in enumerate(p)).unsqueeze(0).unsqueeze(0)
+    )  # [1, 1, N]
+
+    # 기저 행렬 생성
+    T_pinv, T = chebyshev_matrices(N, degree)
+    T_sum = chebyshev_sum_matrix(N, degree)
+
+    # [주의] 신경망에서는 S를 정규화하여 쓰지만, 순수 수학 검증을 위해 정규화 전 S를 구합니다.
+    N_pts = 128
+    k_pts = np.arange(N_pts)
+    x_pts = 0.5 * (1 + np.cos(math.pi * (2 * k_pts + 1) / (2 * N_pts)))
+    T_f = np.cos(
+        np.arccos(np.clip(2 * x_pts - 1, -1, 1))[:, None]
+        * np.arange(degree + 1)[None, :]
+    )
+    T_sum_np = np.cos(
+        np.arccos(np.clip(2 * x_pts - 1, -1, 1))[:, None]
+        * np.arange(degree + 2)[None, :]
+    )
+    V_mono = np.vstack([x_pts**j for j in range(degree + 1)]).T
+    T_k_mono = np.linalg.pinv(V_mono) @ T_f
+    F_at_pts = np.zeros((N_pts, degree + 1))
+    for k in range(degree + 1):
+        mono_c = T_k_mono[:, k].tolist()
+        F_c = [float(c) for c in _algorithm_B(mono_c)]
+        for i, xi in enumerate(x_pts):
+            F_at_pts[i, k] = sum(F_c[j] * xi**j for j in range(len(F_c)))
+
+    S_exact = torch.tensor(np.linalg.pinv(T_sum_np) @ F_at_pts, dtype=torch.float32)
+
+    # 4. Heinn-X 행렬 연산 수행 (T_pinv -> S -> T_sum)
+    c_pred = torch.einsum("bcn,kn->bck", f_val, T_pinv)  # 체비쇼프 계수 변환
+    c_int_pred = torch.einsum("bck,lk->bcl", c_pred, S_exact)  # 대수적 적분
+    F_pred_grid = torch.einsum(
+        "bol,nl->bon", c_int_pred, T_sum
+    ).squeeze()  # 그리드 복원
+
+    # 5. 정답 그리드 값 계산
+    F_exact_grid = sum(float(c) * (x**i) for i, c in enumerate(F_exact_coeffs))
+
+    # 6. 결과 비교
+    max_error = torch.max(torch.abs(F_pred_grid - F_exact_grid)).item()
+    print(f"  [PyTorch 연산] 최대 오차 : {max_error:.2e}")
+
+    if max_error < 1e-5:
+        print(
+            "  [결론] 대성공 ✓: Heinn-X PyTorch 파이프라인이 완벽한 대수적 평형을 유지합니다."
+        )
+    else:
+        print("  [결론] 실패 ✗: 행렬 변환 과정에서 정보 손실이 발생했습니다.")
+
+    return max_error
+
+
 if __name__ == "__main__":
+    # 0. 수학적 무결성 우선 검증 (Sanity Check)
+    toy_err = run_toy_problem()
+
+    # 1~3. 본 딥러닝 벤치마크 실행
     r1d = run_1d()
     r2d = run_2d()
-    r_few = run_fewshot_1d()  # <-- 새로 추가된 실험 실행
+    r_few = run_fewshot_1d()
 
     print("\n" + "=" * 65 + "\n  FINAL SUMMARY\n" + "=" * 65)
+
+    print("\n  [0] Mathematical Sanity Check (Toy Problem):")
+    toy_status = "PASSED ✓" if toy_err < 1e-5 else "FAILED ✗"
+    print(f"    Max Error = {toy_err:.2e}  [{toy_status}]")
 
     print("\n  [1] 1D Burgers (True Resolution Invariance):")
     for res in [64, 32, 16]:
