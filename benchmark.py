@@ -145,16 +145,12 @@ class HeinnXConv1D(nn.Module):
     def __init__(self, in_ch, out_ch, degree):
         super().__init__()
         self.degree = degree
-        # 가중치를 2배로 늘림 (원래 신호용 + 적분 신호용)
+        # 가중치는 오직 미분/변화량 공간(Derivative Space)에서만 작동함
         self.W = nn.Parameter(
-            torch.randn(in_ch * 2, out_ch, degree + 1)
-            / math.sqrt(in_ch * 2 * (degree + 1))
+            torch.randn(in_ch, out_ch, degree + 1) / math.sqrt(in_ch * (degree + 1))
         )
 
-        S_normed = build_S_matrix(degree)
-        # S 행렬이 [d+2, d+1] 이므로, 차원 유지를 위해 [d+1, d+1]로 자름
-        # (최고차항 하나가 잘리지만 적분 특성상 값의 크기가 매우 작아 문제없음)
-        self.register_buffer("S", S_normed[:-1, :])
+        self.register_buffer("S", build_S_matrix(degree))
         self._cache = {}
 
     def forward(self, x):
@@ -162,23 +158,25 @@ class HeinnXConv1D(nn.Module):
         d_eff = min(self.degree, N // 2)
         key = (N, d_eff, str(x.device))
         if key not in self._cache:
-            self._cache[key] = chebyshev_matrices(N, d_eff, x.device)
-        T_pinv, T = self._cache[key]
+            self._cache[key] = (
+                chebyshev_matrices(N, d_eff, x.device)[0],
+                chebyshev_sum_matrix(N, d_eff, x.device),
+            )
+        T_pinv, T_sum = self._cache[key]
 
-        # 1. 입력 신호를 다항식 계수로 변환
-        c = torch.einsum("bcn,kn->bck", x, T_pinv)  # [B, C, d_eff+1]
+        # 1. 입력을 계수로 변환
+        c = torch.einsum("bcn,kn->bck", x, T_pinv)
 
-        # 2. Heinn-X 코어를 이용해 '적분된 특징(Integrated Feature)' 추출
-        S_slice = self.S[: d_eff + 1, : d_eff + 1]
-        c_int = torch.einsum("bck,lk->bcl", c, S_slice)  # [B, C, d_eff+1]
+        # 2. 신경망(W)은 변화량(Derivative/Forcing term)만 예측함
+        m_deriv = torch.einsum("bck,cok->bok", c, self.W[:, :, : d_eff + 1])
 
-        # 3. 원본 특징과 적분 특징을 채널 축으로 결합 (Multi-scale)
-        c_cat = torch.cat([c, c_int], dim=1)  # [B, C*2, d_eff+1]
+        # 3. [승리 요인: 적분 병목] Heinn-X 행렬이 강제로 최종 해를 적분해냄!
+        # (신경망이 S를 우회할 수 없음)
+        S_slice = self.S[: d_eff + 2, : d_eff + 1]
+        m_int = torch.einsum("bok,lk->bol", m_deriv, S_slice)
 
-        # 4. 결합된 특징을 가중치 W를 통해 믹싱
-        m = torch.einsum("bck,cok->bok", c_cat, self.W[:, :, : d_eff + 1])
-
-        return torch.einsum("bok,nk->bon", m, T)
+        # 4. 차수가 1단계 높아진(d_eff+2) 다항식을 그리드로 복원
+        return torch.einsum("bol,nl->bon", m_int, T_sum)
 
 
 class ChebConv2D(nn.Module):
@@ -218,35 +216,34 @@ class HeinnXConv2D(nn.Module):
         super().__init__()
         self.degree = degree
         self.out_ch = out_ch
-        # 가중치 2배 (원래 신호 + 적분 신호)
         self.W_w = nn.Parameter(
-            torch.randn(in_ch * 2, out_ch, degree + 1)
-            / math.sqrt(in_ch * 2 * (degree + 1))
+            torch.randn(in_ch, out_ch, degree + 1) / math.sqrt(in_ch * (degree + 1))
         )
         self.W_h = nn.Parameter(
-            torch.randn(out_ch * 2, out_ch, degree + 1)
-            / math.sqrt(out_ch * 2 * (degree + 1))
+            torch.randn(out_ch, out_ch, degree + 1) / math.sqrt(out_ch * (degree + 1))
         )
 
-        S_normed = build_S_matrix(degree)
-        self.register_buffer("S", S_normed[:-1, :])
+        self.register_buffer("S", build_S_matrix(degree))
         self._cache = {}
 
     def _1d(self, x, W, N):
         d_eff = min(self.degree, N // 2)
         key = (N, d_eff, str(x.device))
         if key not in self._cache:
-            self._cache[key] = chebyshev_matrices(N, d_eff, x.device)
-        T_pinv, T = self._cache[key]
+            self._cache[key] = (
+                chebyshev_matrices(N, d_eff, x.device)[0],
+                chebyshev_sum_matrix(N, d_eff, x.device),
+            )
+        T_pinv, T_sum = self._cache[key]
 
-        # Heinn-X Multi-scale 추출
         c = torch.einsum("bcn,kn->bck", x, T_pinv)
-        S_slice = self.S[: d_eff + 1, : d_eff + 1]
-        c_int = torch.einsum("bck,lk->bcl", c, S_slice)
+        # 신경망 믹싱 (변화량 도출)
+        m_deriv = torch.einsum("bck,cok->bok", c, W[:, :, : d_eff + 1])
+        # Heinn-X 강제 적분
+        S_slice = self.S[: d_eff + 2, : d_eff + 1]
+        m_int = torch.einsum("bok,lk->bol", m_deriv, S_slice)
 
-        c_cat = torch.cat([c, c_int], dim=1)
-        m = torch.einsum("bck,cok->bok", c_cat, W[:, :, : d_eff + 1])
-        return torch.einsum("bok,nk->bon", m, T)
+        return torch.einsum("bol,nl->bon", m_int, T_sum)
 
     def forward(self, x):
         B, C, H, W = x.shape
