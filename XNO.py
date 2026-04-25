@@ -182,6 +182,52 @@ class HeinnXConv1D(nn.Module):
         return out_base + out_int
 
 
+# ════════════════════════════════════════════════════════════════════
+#  HYBRID ARCHITECTURE (Phase 2)
+# ════════════════════════════════════════════════════════════════════
+
+
+class Hybrid_HeinnX(nn.Module):
+    def __init__(self, modes=16, width=32, depth=4, in_ch=2, out_ch=1):
+        super().__init__()
+
+        # [Track 1] Global Smooth Engine: 대수적 무결성을 유지하는 Heinn-X
+        # make_no_1d 빌더를 그대로 사용하여 기존 아키텍처를 재사용합니다.
+        self.global_net = make_no_1d(
+            lambda: HeinnXConv1D(width, width, modes),
+            width=width,
+            depth=depth,
+            in_ch=in_ch,
+            out_ch=out_ch,
+        )
+
+        # [Track 2] Local Shock Absorber: 충격파(불연속점) 전담 국소 신경망
+        # kernel_size=5 로 설정하여 좁은 영역의 급격한 변화를 포착합니다.
+        self.local_net = nn.Sequential(
+            nn.Conv1d(in_ch, width, kernel_size=1),
+            nn.GELU(),
+            nn.Conv1d(width, width, kernel_size=1),
+            nn.GELU(),
+            nn.Conv1d(width, width, kernel_size=1),
+            nn.GELU(),
+            nn.Conv1d(width, out_ch, kernel_size=1),
+        )
+
+    def forward(self, x):
+        # x 입력 형태: (Batch, N, in_ch)
+
+        # 1. Global Path 연산 (Heinn-X가 부드러운 배경을 처리)
+        out_global = self.global_net(x)  # 출력 형태: (Batch, N, out_ch)
+
+        # 2. Local Path 연산 (CNN이 뾰족한 충격파를 처리)
+        # 1D CNN은 (Batch, Channel, Length) 형태를 요구하므로 차원을 변경해줍니다.
+        x_local = x.permute(0, 2, 1)
+        out_local = self.local_net(x_local).permute(0, 2, 1)
+
+        # 3. 최종 병합: 평형 상태 + 국소 예외 처리
+        return out_global + out_local
+
+
 class SpectralConv1D(nn.Module):
     def __init__(self, in_ch, out_ch, modes):
         super().__init__()

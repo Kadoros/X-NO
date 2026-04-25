@@ -16,7 +16,11 @@ SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device(
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available() else "cpu"
+)
 print(f"Device: {DEVICE}\n")
 
 
@@ -82,6 +86,8 @@ def run_anti_fourier_benchmark():
     print("  목적: FNO가 붕괴하는 현실 물리계에서 Heinn-X의 수학적 우위 증명")
     print("=" * 65)
 
+    MODES = 8
+
     U_master, V_master = generate_shock_physics_master(1000, 128)
 
     U_tr, V_tr = U_master[:800, ::2], V_master[:800, ::2]
@@ -92,9 +98,9 @@ def run_anti_fourier_benchmark():
     U_te, V_te = U_master[800:, ::2], V_master[800:, ::2]
     te = DataLoader(TensorDataset(make_input_1d(U_te), V_te.unsqueeze(-1)), 32)
 
-    fno = make_no_1d(lambda: SpectralConv1D(32, 32, 16)).to(DEVICE)
-    cheb = make_no_1d(lambda: ChebConv1D(32, 32, 16)).to(DEVICE)
-    hx = make_no_1d(lambda: HeinnXConv1D(32, 32, 16)).to(DEVICE)
+    fno = make_no_1d(lambda: SpectralConv1D(32, 32, MODES)).to(DEVICE)
+    cheb = make_no_1d(lambda: ChebConv1D(32, 32, MODES)).to(DEVICE)
+    hx = make_no_1d(lambda: HeinnXConv1D(32, 32, MODES)).to(DEVICE)
 
     results = {}
     for name, model in [("FNO", fno), ("ChebNO", cheb), ("Heinn-X", hx)]:

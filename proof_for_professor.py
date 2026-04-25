@@ -15,7 +15,12 @@ SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device(
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available() else "cpu"
+)
+MODE = 32
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -101,8 +106,8 @@ def run_experiment_1():
     )
     te = DataLoader(TensorDataset(make_input_1d(U[500:]), V[500:].unsqueeze(-1)), 32)
 
-    cheb = make_no_1d(lambda: ChebConv1D(32, 32, 16)).to(DEVICE)
-    hx = make_no_1d(lambda: HeinnXConv1D(32, 32, 16)).to(DEVICE)
+    cheb = make_no_1d(lambda: ChebConv1D(32, 32, MODE)).to(DEVICE)
+    hx = make_no_1d(lambda: HeinnXConv1D(32, 32, MODE)).to(DEVICE)
 
     results = {}
     for name, model in [("ChebNO", cheb), ("Heinn-X", hx)]:
@@ -137,8 +142,8 @@ def run_experiment_2():
     )
     te = DataLoader(TensorDataset(make_input_1d(U[500:]), V[500:].unsqueeze(-1)), 32)
 
-    cheb = make_no_1d(lambda: ChebConv1D(32, 32, 16)).to(DEVICE)
-    hx = make_no_1d(lambda: HeinnXConv1D(32, 32, 16)).to(DEVICE)
+    cheb = make_no_1d(lambda: ChebConv1D(32, 32, MODE)).to(DEVICE)
+    hx = make_no_1d(lambda: HeinnXConv1D(32, 32, MODE)).to(DEVICE)
 
     results = {}
     for name, model in [("ChebNO", cheb), ("Heinn-X", hx)]:
