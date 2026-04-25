@@ -204,11 +204,11 @@ class Hybrid_HeinnX(nn.Module):
         # [Track 2] Local Shock Absorber: 충격파(불연속점) 전담 국소 신경망
         # kernel_size=5 로 설정하여 좁은 영역의 급격한 변화를 포착합니다.
         self.local_net = nn.Sequential(
-            nn.Conv1d(in_ch, width, kernel_size=1),
+            nn.Conv1d(in_ch, width, kernel_size=5, padding=2),
             nn.GELU(),
-            nn.Conv1d(width, width, kernel_size=1),
+            nn.Conv1d(width, width, kernel_size=5, padding=2),
             nn.GELU(),
-            nn.Conv1d(width, width, kernel_size=1),
+            nn.Conv1d(width, width, kernel_size=5, padding=2),
             nn.GELU(),
             nn.Conv1d(width, out_ch, kernel_size=1),
         )

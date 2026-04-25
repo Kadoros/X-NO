@@ -20,7 +20,7 @@ DEVICE = torch.device(
     if torch.cuda.is_available()
     else "mps" if torch.backends.mps.is_available() else "cpu"
 )
-MODE = 32
+MODE = 16
 
 
 # ════════════════════════════════════════════════════════════════════

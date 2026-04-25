@@ -27,7 +27,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
-from XNO import HeinnXConv1D, ChebConv1D, SpectralConv1D, make_no_1d
+from XNO import (
+    HeinnXConv1D,
+    ChebConv1D,
+    SpectralConv1D,
+    make_no_1d,
+    build_S_matrix,
+    _algorithm_B,
+    chebyshev_matrices,
+    chebyshev_sum_matrix,
+)
 
 SEED = 42
 random.seed(SEED)

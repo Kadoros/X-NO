@@ -1,0 +1,39 @@
+# 1. Python 캐시 및 컴파일 파일
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 2. 대용량 데이터셋 (HDF5 파일 등)
+# 데이터셋은 보통 용량이 커서 깃에 올리지 않고 별도 링크로 공유합니다.
+dataset/
+*.hdf5
+*.h5
+
+# 3. 학습된 모델 가중치 (Weights)
+*.pth
+*.pt
+*.ckpt
+
+# 4. 결과 시각화 이미지 (PNG, JPG 등)
+# 실험 코드를 돌릴 때마다 생성되는 수많은 그래프들을 제외합니다.
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+
+# 5. 임시 파일 및 로그
+buffer.txt
+*.log
+.DS_Store
+Thumbs.db
+
+# 6. IDE 설정 (VS Code 등)
+.vscode/
+.idea/
+
+# 7. 아카이브/백업 폴더 (기존 코드를 백업해둔 폴더가 있다면 제외)
+arc/
+
