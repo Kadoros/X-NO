@@ -9,10 +9,10 @@
 ## 1. 서론: 가설의 수립 (Hypothesis)
 
 ### 🔹 배경
-연속 수학(미적분)과 이산 수학(차분/수열합)의 평형 이론인 **Heinn-X(H(x) 보정항)**를 Neural Operator의 적분 커널에 이식한다면, 데이터에만 의존하지 않는 **물리적 무결성(Physical Integrity)**을 가진 강력한 AI가 될 것이라 가설을 세웠습니다.
+연속 수학(미적분)과 이산 수학(차분/수열합)의 평형 이론인 Heinn-X(H(x) 보정항)를 Neural Operator의 적분 커널에 이식한다면, 데이터에만 의존하지 않는 물리적 무결성(Physical Integrity)을 가진 강력한 AI가 될 것이라 가설을 세웠습니다.
 
 ### 🔹 목표
-고정된 대수적 적분 행렬(**S-Matrix**)을 신경망 아키텍처 내부에 직접 구현하여, 이산화 오차(Discretization error)가 존재하지 않는 **Perfect PDE Solver**를 구축하는 것을 목표로 했습니다.
+고정된 대수적 적분 행렬(S-Matrix)을 신경망 아키텍처 내부에 직접 구현하여, 이산화 오차(Discretization error)가 존재하지 않는 Perfect PDE Solver를 구축하는 것을 목표로 했습니다.
 
 ---
 
