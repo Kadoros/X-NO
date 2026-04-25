@@ -6,6 +6,8 @@
 
 ---
 
+[wiki](https://deepwiki.com/Kadoros/X-NO/1-x-no-project-overview)
+
 ## 1. 서론: 가설의 수립 (Hypothesis)
 
 ### 🔹 배경
