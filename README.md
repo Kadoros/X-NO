@@ -26,6 +26,13 @@
 | **Phase 2** | **동적 PDE (Dynamic PDE)** | 1D Advection, Burgers' 방정식 적용 | **하락:** 충격파 발생 시 FNO/ChebNO 대비 성능 저하 |
 | **Phase 3** | **역문제 및 노이즈** | Poisson 방정식 역산 및 30% 노이즈 테스트 | **실패:** 노이즈가 적분기를 타고 증폭되는 부작용 발생 |
 
+dataset: https://darus.uni-stuttgart.de/dataset.xhtml?persistentId=doi:10.18419/darus-2986
+1D_Advection_Sols_beta0.1.hdf5
+1D_Advection_Sols_beta01.0.hdf5
+1D_Burgers_Sols_Nu0.0001.hdf5
+
+
+
 ---
 
 ## 3. 핵심 발견 (Critical Findings): 왜 터졌는가?
